@@ -5,6 +5,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from tqdm import tqdm
+
 # An abstract class that returns the tempered energy function value
 # Users need to implement the energy() member function
 class Energy(nn.Module):
@@ -137,7 +139,10 @@ class TemperFlow(nn.Module):
         except:
             pass
 
-    def train_one_beta(self, beta, fn="kl", ref_bij=None, bs=1000, nepoch=1001, lr=0.001, verbose=False):
+    def train_one_beta(
+        self, beta, fn="kl", ref_bij=None, bs=1000, nepoch=1001, lr=0.001, verbose=False,
+        tb_writer=None,
+    ):
         # ref_scale = math.sqrt(2.0 - beta)
         # self.scale_ref_distr(ref_bij, scale=ref_scale)
 
@@ -147,9 +152,9 @@ class TemperFlow(nn.Module):
         losses = []
         logz = None
 
-        for i in range(nepoch):
+        for i in tqdm(range(nepoch)):
             energy, logr, logq = self.sampling(beta, bs, ref_bij)
-            
+
             if "l2" in fn:
                 # ||f-g||^2 = E_r[(f-g)^2/r], g is the target distribution
                 # log[(f-g)^2/r] = 2 * log|f-g| - log(r) = 2 * log(f) + 2 * log|1 - g/f| - log(r)
@@ -200,6 +205,7 @@ class TemperFlow(nn.Module):
 
             lossi = loss.item()
             losses.append(lossi)
+            tb_writer.add_scalar(f"loss/{fn}/beta{beta}", lossi, i)
             if verbose and i % 50 == 0:
                 if fn == "l2" or fn == "mh2":
                     print(f"epoch {i}, logz = {logz}, loss = {loss.item()}")
@@ -216,7 +222,9 @@ class TemperFlow(nn.Module):
     def train_flow(self, beta0=0.1, kl_decay=0.8, nepoch=(2001, 2001, 2001),
                    bs=1000, lr=0.0001, max_betas=100, verbose=1,
                    ref=None, ref_cutoff=[0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.01, 0.001],
-                   checkpoint=None, recover=False):
+                   checkpoint=None, recover=False,
+                   tb_writer=None,
+        ):
         t0 = time.time()
         # Epochs at different stages
         if type(nepoch) is tuple:
@@ -239,10 +247,14 @@ class TemperFlow(nn.Module):
         # ref = None
         ref_cutoff = ref_cutoff.copy()
 
-        for i in range(max_betas):
+        for i in tqdm(range(max_betas)):
             t1 = time.time()
             beta = math.exp(logbeta)
-            print(f"i = {i}, logbeta = {logbeta}, beta = {beta}\n") if verbose > 0 else None
+            if verbose > 0:
+                msg = f"i = {i}, logbeta = {logbeta}, beta = {beta}\n"
+                print(msg); tb_writer.add_text("ith_tempered_beta", msg, i)
+                tb_writer.add_scalar("logbeta", logbeta, i)
+                tb_writer.add_scalar("beta", beta, i)
 
             if recover and os.path.isfile(f"{checkpoint}_{i}.pt"):
                 self.load_state_dict(torch.load(f"{checkpoint}_{i}.pt"))
@@ -251,7 +263,10 @@ class TemperFlow(nn.Module):
                 # Heuristic choice of adaptive learning rate
                 lri = lr / math.sqrt(beta) * math.pow(0.9, i)
                 fni, nepochi = ("kl", nepoch_init) if i == 0 else ("l2", nepoch_mid)
-                lossesi = self.train_one_beta(beta, fn=fni, ref_bij=ref, bs=bs, nepoch=nepochi, lr=lri, verbose=(verbose > 1))
+                lossesi = self.train_one_beta(
+                    beta, fn=fni, ref_bij=ref, bs=bs, nepoch=nepochi, lr=lri, verbose=(verbose > 1),
+                    tb_writer=tb_writer,
+                )
                 losses.append(lossesi)
 
             if checkpoint is not None:
@@ -263,6 +278,7 @@ class TemperFlow(nn.Module):
             # Estimate KL divergence
             kl, kl_grad = self.kl_grad(beta, bs=10 * bs, ref_bij=ref)
             kls.append(float(kl))
+            tb_writer.add_scalar("ith_tempered_kl", kl, i)
 
             # Compute delta
             delta_abs_avg = exp_move_avg(np.abs(deltas), fac=0.9)
@@ -275,9 +291,15 @@ class TemperFlow(nn.Module):
             t2 = time.time()
             times.append(t2 - t1)
             if verbose > 0:
-                print(f"\nkl = {kl}, kl_grad = {kl_grad}")
-                print(f"delta = {delta}, delta_avg = {delta_abs_avg}")
-                print(f"{t2 - t1} seconds\n")
+                msg = (
+                    f"kl = {kl}, kl_grad = {kl_grad}\n" +
+                    f"delta = {delta}, delta_avg = {delta_abs_avg}\n" +
+                    f"{t2 - t1} seconds\n"
+                )
+                print(msg); tb_writer.add_text("ith_tempered_kl_delta", msg, i)
+                # print(f"\nkl = {kl}, kl_grad = {kl_grad}")
+                # print(f"delta = {delta}, delta_avg = {delta_abs_avg}")
+                # print(f"{t2 - t1} seconds\n")
 
             # Update beta
             logbeta += delta
@@ -295,8 +317,8 @@ class TemperFlow(nn.Module):
         t1 = time.time()
         print("\n****** Final training with beta=1 ******\n") if verbose > 0 else None
         lri = lr * math.pow(0.9, i + 1)
-        lossesi1 = self.train_one_beta(beta=1.0, fn="l2", ref_bij=ref, bs=bs, nepoch=nepoch_final // 2, lr=lri, verbose=(verbose > 1))
-        lossesi2 = self.train_one_beta(beta=1.0, fn="kl", ref_bij=None, bs=bs, nepoch=nepoch_final // 2, lr=lri, verbose=(verbose > 1))
+        lossesi1 = self.train_one_beta(beta=1.0, fn="l2", ref_bij=ref, bs=bs, nepoch=nepoch_final // 2, lr=lri, verbose=(verbose > 1), tb_writer=tb_writer)
+        lossesi2 = self.train_one_beta(beta=1.0, fn="kl", ref_bij=None, bs=bs, nepoch=nepoch_final // 2, lr=lri, verbose=(verbose > 1), tb_writer=tb_writer)
         t2 = time.time()
         losses.append(lossesi1)
         losses.append(lossesi2)

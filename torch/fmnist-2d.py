@@ -40,12 +40,12 @@ model_path = "model"
 # Generator
 generator = MNIST_Generator(latent_dim=latent_dim, base_channels=base_channels)
 generator = generator.to(device=device)
-generator.load_state_dict(torch.load(f"pretrained/fmnist-vae-2d-generator.pt"))
+generator.load_state_dict(torch.load(f"pretrained/fmnist-vae-2d-generator.pt", map_location=device))
 generator.eval()
 # Discriminator
 discr = MNIST_Discriminator(base_channels=base_channels // 2)
 discr = discr.to(device=device)
-discr.load_state_dict(torch.load(f"pretrained/fmnist-vae-2d-discr.pt"))
+discr.load_state_dict(torch.load(f"pretrained/fmnist-vae-2d-discr.pt", map_location=device))
 discr.eval()
 
 class MNISTLatentEnergy(Energy):

@@ -6,7 +6,7 @@ import pyro.distributions as dist
 from typing import List
 from typing_extensions import Final
 
-from temperflow.spline import LinearRationalSpline
+from .spline import LinearRationalSpline
 
 # Fully-connected layers that can be compiled by TorchScript
 class Dense(nn.Module):

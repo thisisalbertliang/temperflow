@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.distributions as D
 import pyro.distributions as dist
 
-from temperflow.block import MACNet, MaskedAffineCoupling, Dense, SplineAutoReg,\
+from .block import MACNet, MaskedAffineCoupling, Dense, SplineAutoReg,\
     SplineBlockAutoReg, SplineAutoRegWithinBlock, SplineCoupling, Spline2D
 
 # Transformation mapping based on masked affine coupling layers
